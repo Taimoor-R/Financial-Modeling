@@ -31,7 +31,7 @@ class LSTMStockPredictor:
     def train(self, data):
         X, y, scaler = self.preprocess_data(data)
         self.build_model()
-        self.model.fit(X, y, epochs=10, batch_size=32, verbose=1)
+        self.model.fit(X, y, epochs=100, batch_size=32, verbose=1)
         return scaler
 
     def predict(self, data, scaler):
