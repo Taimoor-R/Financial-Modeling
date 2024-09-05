@@ -1,7 +1,6 @@
 import numpy as np
 import gym
 from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import DummyVecEnv
 
 class StockTradingEnv(gym.Env):
     def __init__(self, data):
@@ -9,11 +8,11 @@ class StockTradingEnv(gym.Env):
         self.data = data
         self.current_step = 0
         self.action_space = gym.spaces.Discrete(3)  # Buy, Hold, Sell
-        self.observation_space = gym.spaces.Box(low=0, high=np.inf, shape=(self.data.shape[1],), dtype=np.float32)  # Updated shape
+        self.observation_space = gym.spaces.Box(low=0, high=np.inf, shape=(6,), dtype=np.float32)
 
     def reset(self):
         self.current_step = 0
-        return self.data.iloc[self.current_step].values.astype(np.float32)  # Ensure dtype matches observation_space
+        return self._get_observation()
 
     def step(self, action):
         self.current_step += 1
@@ -22,31 +21,33 @@ class StockTradingEnv(gym.Env):
             self.current_step = 0
         else:
             done = False
-
-        if self.current_step == 0:
-            reward = 0  # No previous close price to compare
-        else:
-            prev_close = self.data.iloc[self.current_step - 1]['Close']
-            current_close = self.data.iloc[self.current_step]['Close']
-
-            if action == 0:  # Buy
-                reward = current_close - prev_close
-            elif action == 2:  # Sell
-                reward = prev_close - current_close
-            else:  # Hold
-                reward = 0
-
-        obs = self.data.iloc[self.current_step].values.astype(np.float32)  # Ensure dtype matches observation_space
+        
+        reward = 0
+        # Example reward calculation: Adjust based on strategy
+        if action == 0:  # Buy
+            reward = self.data.iloc[self.current_step]['Close'] - self.data.iloc[self.current_step-1]['Close']
+        elif action == 2:  # Sell
+            reward = self.data.iloc[self.current_step-1]['Close'] - self.data.iloc[self.current_step]['Close']
+        
+        obs = self._get_observation()
         return obs, reward, done, {}
 
-    def render(self, mode='human'):
-        pass
+    def _get_observation(self):
+        row = self.data.iloc[self.current_step]
+        return np.array([
+            row['Close'], 
+            calculate_sma(self.data, 50).iloc[self.current_step], 
+            calculate_rsi(self.data).iloc[self.current_step], 
+            calculate_macd(self.data)[0].iloc[self.current_step], 
+            calculate_macd(self.data)[1].iloc[self.current_step], 
+            calculate_bollinger_bands(self.data)[0].iloc[self.current_step]
+        ])
 
 def train_reinforcement_learning_model(data):
-    env = DummyVecEnv([lambda: StockTradingEnv(data)])
+    env = StockTradingEnv(data)
     model = PPO('MlpPolicy', env, verbose=1)
     model.learn(total_timesteps=10000)
-    model.save("stock_trading_model")  # Save model without extra extension
+    model.save("stock_trading_model")
 
 def load_reinforcement_learning_model(filename):
     model = PPO.load(filename)

@@ -11,7 +11,7 @@ class LSTMStockPredictor:
 
     def preprocess_data(self, data):
         scaler = MinMaxScaler(feature_range=(0, 1))
-        scaled_data = scaler.fit_transform(data[['Close']].values.reshape(-1, 1))
+        scaled_data = scaler.fit_transform(data[['Close']].values)
         
         X, y = [], []
         for i in range(len(scaled_data) - self.look_back):
@@ -31,21 +31,18 @@ class LSTMStockPredictor:
     def train(self, data):
         X, y, scaler = self.preprocess_data(data)
         self.build_model()
-        self.model.fit(X, y, epochs=100, batch_size=32, verbose=1)
+        self.model.fit(X, y, epochs=10, batch_size=32, verbose=1)
         return scaler
 
     def predict(self, data, scaler):
-        last_sequence = data[['Close']].values[-self.look_back:].reshape(-1, 1)
+        last_sequence = data[['Close']].values[-self.look_back:]
         last_sequence = scaler.transform(last_sequence)
         last_sequence = np.expand_dims(last_sequence, axis=0)
         prediction = self.model.predict(last_sequence)
         return scaler.inverse_transform(prediction)[0, 0]
 
     def save_model(self, filename):
-        if self.model is not None:
-            self.model.save(filename)
-        else:
-            raise ValueError("Model is not trained. Please train the model before saving.")
+        self.model.save(filename)
 
     def load_model(self, filename):
         self.model = load_model(filename)
