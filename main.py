@@ -9,6 +9,6 @@ def main():
 
     # Fetch historical data
     stock_data = fetch_stock_data(ticker, start_date, end_date)
-    print(stock_data)
+
 if __name__ == "__main__":
     main()
