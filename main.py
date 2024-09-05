@@ -31,7 +31,7 @@ def main():
     # Load the trained RL model
     print("Loading the trained RL model...")
     try:
-        rl_model = load_reinforcement_learning_model("stock_trading_model")
+        rl_model = load_reinforcement_learning_model("stock_trading_model.zip")
     except Exception as e:
         print(f"Error loading RL model: {e}")
         return
