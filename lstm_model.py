@@ -14,6 +14,7 @@ class LSTMStockPredictor:
         self.model = None
 
     def calculate_technical_indicators(self, data):
+        data = data.copy()  # Create a copy of the DataFrame
         data['SMA_20'] = data['Close'].rolling(window=20).mean()
         data['SMA_50'] = data['Close'].rolling(window=50).mean()
         data['EMA_20'] = data['Close'].ewm(span=20, adjust=False).mean()
@@ -22,8 +23,7 @@ class LSTMStockPredictor:
         data['MACD'], data['MACD_Signal'] = self.calculate_macd(data)
         data['BB_Mid'], data['BB_Upper'], data['BB_Lower'] = self.calculate_bollinger_bands(data)
         data['Momentum'] = data['Close'].diff(4)
-        data = data.dropna()
-        return data
+
 
     def calculate_rsi(self, data, window=14):
         delta = data['Close'].diff(1)
