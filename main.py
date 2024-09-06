@@ -3,10 +3,10 @@ from dash import dcc, html
 from dash.dependencies import Input, Output
 import plotly.graph_objs as go
 import pandas as pd
+import numpy as np
 import yfinance as yf
-import matplotlib.pyplot as plt
 from lstm_model import LSTMStockPredictor
-from datetime import datetime
+from reinforcement_learning import train_reinforcement_learning_model
 
 # Initialize the Dash app
 app = dash.Dash(__name__)
@@ -14,107 +14,131 @@ app = dash.Dash(__name__)
 # Global variables
 ticker = 'NVDA'  # Example ticker for Nvidia
 start_date = '2000-01-01'
-train_end_date = '2023-12-31'
-prediction_start_date = '2024-01-01'
-prediction_end_date = '2024-12-31'
+end_date = '2023-12-31'
 lstm_predictor = LSTMStockPredictor(look_back=25)
 scaler = None
+rl_model = None
 
-# Fetch stock data till 2023 for training
-def fetch_training_data(ticker, start_date, train_end_date):
-    stock_data = yf.download(ticker, start=start_date, end=train_end_date)
-    stock_data = stock_data.dropna()
+# Fetch historical stock data for a single ticker
+def fetch_one_stock_data(ticker, start_date, end_date):
+    stock_data = yf.download(ticker, start=start_date, end=end_date)
+    stock_data = stock_data.dropna()  # Drop rows with missing values
+    stock_data.reset_index(inplace=True)
+    print(f"Fetched stock data for {ticker} with shape: {stock_data.shape}")
     return stock_data
 
-# Fetch stock data for 2024 for prediction and actual comparison
-def fetch_2024_data(ticker, prediction_start_date, prediction_end_date):
-    stock_data_2024 = yf.download(ticker, start=prediction_start_date, end=prediction_end_date)
-    stock_data_2024 = stock_data_2024.dropna()
-    return stock_data_2024
-
-# Generate training data graph (till 2023)
-def generate_training_data_graph(stock_data_till_2023):
-    plt.figure(figsize=(14, 7))
-    plt.plot(stock_data_till_2023.index, stock_data_till_2023['Close'], label="Actual (Till 2023)", color='blue')
-    plt.title(f"Stock Price of {ticker} (2000-2023)")
-    plt.xlabel("Date")
-    plt.ylabel("Price")
-    plt.legend()
-    plt.grid(True)
-    plt.savefig("training_data_graph.png")
-    plt.close()
-
-# Generate predictions vs actual for 2024 graph
-def generate_predictions_vs_actual_graph(actual_data_2024, predicted_data_2024):
-    plt.figure(figsize=(14, 7))
-    plt.plot(actual_data_2024.index, actual_data_2024['Close'], label="Actual (2024)", color='green')
-    plt.plot(predicted_data_2024.index, predicted_data_2024['Close'], label="Predicted (2024)", linestyle="--", color='red')
-    plt.title(f"Stock Price Predictions vs Actual for {ticker} (2024)")
-    plt.xlabel("Date")
-    plt.ylabel("Price")
-    plt.legend()
-    plt.grid(True)
-    plt.savefig("predictions_vs_actual_2024.png")
-    plt.close()
-
-# Main function to train the model and predict for 2024
-def train_and_predict(ticker):
-    # Fetch and plot training data (till 2023)
-    print("Fetching training data...")
-    stock_data_till_2023 = fetch_training_data(ticker, start_date, train_end_date)
-    print("Generating training data graph...")
-    generate_training_data_graph(stock_data_till_2023)
+# Add technical indicators to the stock data
+def add_technical_indicators(stock_data):
+    stock_data['SMA_20'] = stock_data['Close'].rolling(window=20).mean()
+    stock_data['SMA_50'] = stock_data['Close'].rolling(window=50).mean()
+    stock_data['EMA_20'] = stock_data['Close'].ewm(span=20, adjust=False).mean()
+    stock_data['EMA_50'] = stock_data['Close'].ewm(span=50, adjust=False).mean()
     
-    # Simulate training process (replace with real LSTM training and predictions)
-    print("Simulating predictions for 2024...")
-    actual_stock_data_2024 = fetch_2024_data(ticker, prediction_start_date, prediction_end_date)
-    
-    # Mock predictions for 2024
-    predicted_stock_data_2024 = actual_stock_data_2024.copy()
-    predicted_stock_data_2024["Close"] = actual_stock_data_2024["Close"] * 1.02  # Simulated prediction
+    # RSI calculation
+    delta = stock_data['Close'].diff(1)
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    stock_data['RSI'] = 100 - (100 / (1 + rs))
 
-    print("Generating predictions vs actual graph...")
-    generate_predictions_vs_actual_graph(actual_stock_data_2024, predicted_stock_data_2024)
-    
-    return stock_data_till_2023, actual_stock_data_2024, predicted_stock_data_2024
+    # MACD calculation
+    stock_data['MACD'] = stock_data['Close'].ewm(span=12, adjust=False).mean() - stock_data['Close'].ewm(span=26, adjust=False).mean()
+    stock_data['MACD_Signal'] = stock_data['MACD'].ewm(span=9, adjust=False).mean()
 
-# Dash layout
+    # Bollinger Bands
+    mid = stock_data['Close'].rolling(window=20).mean()
+    std_dev = stock_data['Close'].rolling(window=20).std()
+    stock_data['BB_Upper'] = mid + (std_dev * 2)
+    stock_data['BB_Lower'] = mid - (std_dev * 2)
+
+    # Momentum calculation
+    stock_data['Momentum'] = stock_data['Close'].diff(4)
+
+    stock_data = stock_data.dropna()  # Drop rows with NaN values after calculations
+    return stock_data
+
+# Train model on one stock
+def train_model_on_one_stock():
+    print("Training LSTM on one stock...")
+    stock_data = fetch_one_stock_data(ticker, start_date, end_date)
+    stock_data = add_technical_indicators(stock_data)
+    print(f"Stock data with technical indicators shape: {stock_data.shape}")
+    if 'Date' in stock_data.columns:
+        stock_data.set_index('Date', inplace=True)
+    lstm_predictor.train(stock_data[['Close', 'Volume', 'SMA_20', 'SMA_50', 'EMA_20', 'EMA_50', 'RSI', 'MACD', 'MACD_Signal', 'BB_Upper', 'BB_Lower', 'Momentum']])
+    print("LSTM model trained on one stock.")
+
+# Generate predictions using LSTM model
+def generate_predictions(stock_data, predictor):
+    print(f"Generating predictions for stock data with shape: {stock_data.shape}")
+    if 'Close' not in stock_data.columns:
+        print(f"Error: 'Close' column not found in stock_data.")
+        return pd.DataFrame()
+
+    predictions = []
+    for i in range(len(stock_data) - predictor.look_back):
+        features = stock_data.iloc[i:i + predictor.look_back][['Close', 'Volume', 'SMA_20', 'SMA_50', 'EMA_20', 'EMA_50', 'RSI', 'MACD', 'MACD_Signal', 'BB_Upper', 'BB_Lower', 'Momentum']]
+        prediction = predictor.predict(features)
+        predictions.append(prediction)
+    print(f"Generated {len(predictions)} predictions")
+    return pd.DataFrame(predictions, columns=['Predicted'], index=stock_data.index[predictor.look_back:])
+
+# Train reinforcement learning model using LSTM predictions
+def train_reinforcement_learning(stock_data):
+    print("Training reinforcement learning model...")
+    global lstm_predictor
+    predictions_df = generate_predictions(stock_data, lstm_predictor)
+    train_reinforcement_learning_model(stock_data, lstm_predictor)
+    print("Reinforcement learning model training completed.")
+
+# Get stock data for a specific stock
+def get_stock_data():
+    print(f"Fetching stock data for {ticker}")
+    stock_data = fetch_one_stock_data(ticker, start_date, end_date)
+    stock_data = add_technical_indicators(stock_data)
+    print(f"Fetched stock data for {ticker}")
+    print(f"Columns in stock data: {stock_data.columns}")
+    return stock_data
+
+# Define the app layout
 app.layout = html.Div([
     html.H1(f'Stock Analysis for {ticker}'),
-    dcc.Graph(id='training-graph'),
-    dcc.Graph(id='prediction-graph'),
+    dcc.Graph(id='stock-graph'),
     dcc.Interval(
         id='interval-component',
-        interval=300000,  # Refresh interval in milliseconds
+        interval=300000,
         n_intervals=0
     )
 ])
 
-# Update both graphs on refresh
 @app.callback(
-    [Output('training-graph', 'figure'), Output('prediction-graph', 'figure')],
+    Output('stock-graph', 'figure'),
     [Input('interval-component', 'n_intervals')]
 )
 def update_graph(n):
-    print("Fetching and training on stock data...")
-    
-    stock_data_till_2023, actual_stock_data_2024, predicted_stock_data_2024 = train_and_predict(ticker)
-    
-    # Create training graph
-    training_trace = go.Scatter(x=stock_data_till_2023.index, y=stock_data_till_2023['Close'], mode='lines', name='Actual (Till 2023)', line=dict(color='blue'))
+    global lstm_predictor, scaler
 
-    # Create predictions vs actual graph
-    actual_trace = go.Scatter(x=actual_stock_data_2024.index, y=actual_stock_data_2024['Close'], mode='lines', name='Actual (2024)', line=dict(color='green'))
-    predicted_trace = go.Scatter(x=predicted_stock_data_2024.index, y=predicted_stock_data_2024['Close'], mode='lines', name='Predicted (2024)', line=dict(dash='dash', color='red'))
+    try:
+        print(f"Update graph called with interval: {n}")
+        stock_data = get_stock_data()
 
-    # Layouts
-    layout_training = go.Layout(title=f"Stock Price of {ticker} (2000-2023)", xaxis=dict(title='Date'), yaxis=dict(title='Price'))
-    layout_predictions = go.Layout(title=f"Predictions vs Actual for {ticker} (2024)", xaxis=dict(title='Date'), yaxis=dict(title='Price'))
+        if scaler is None:
+            print("Scaler not found, training model on one stock")
+            train_model_on_one_stock()
 
-    training_figure = {'data': [training_trace], 'layout': layout_training}
-    prediction_figure = {'data': [actual_trace, predicted_trace], 'layout': layout_predictions}
+        predictions_df = generate_predictions(stock_data, lstm_predictor)
 
-    return training_figure, prediction_figure
+        # Create traces for the graph
+        stock_trace = go.Scatter(x=stock_data.index, y=stock_data['Close'], mode='lines', name='Actual')
+        prediction_trace = go.Scatter(x=predictions_df.index, y=predictions_df['Predicted'], mode='lines', name='Predicted', line=dict(dash='dash'))
+
+        layout = go.Layout(title=f'Stock Prices and Predictions for {ticker}', xaxis=dict(title='Date'), yaxis=dict(title='Value'))
+
+        print("Graph updated successfully.")
+        return {'data': [stock_trace, prediction_trace], 'layout': layout}
+    except Exception as e:
+        print(f"Error in update function: {e}")
+        return {'data': [], 'layout': go.Layout(title='Error')}
 
 if __name__ == '__main__':
     app.run_server(debug=True)

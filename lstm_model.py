@@ -12,7 +12,7 @@ class LSTMStockPredictor:
         self.dropout_rate = dropout_rate
         self.units = units
         self.model = None
-        self.scaler = None  # Store the scaler as an instance attribute
+        self.scaler = None
 
     def calculate_technical_indicators(self, data):
         data = data.copy()
@@ -24,7 +24,7 @@ class LSTMStockPredictor:
         data['MACD'], data['MACD_Signal'] = self.calculate_macd(data)
         data['BB_Mid'], data['BB_Upper'], data['BB_Lower'] = self.calculate_bollinger_bands(data)
         data['Momentum'] = data['Close'].diff(4)
-        data = data.dropna()  # Ensure no NaN values after rolling calculations
+        data = data.dropna()
         return data
 
     def calculate_rsi(self, data, window=14):
@@ -49,7 +49,7 @@ class LSTMStockPredictor:
     def preprocess_data(self, data):
         data = self.calculate_technical_indicators(data)
         features = ['Close', 'Volume', 'SMA_20', 'SMA_50', 'EMA_20', 'EMA_50', 'RSI', 'MACD', 'MACD_Signal', 'BB_Upper', 'BB_Lower', 'Momentum']
-        self.scaler = MinMaxScaler(feature_range=(0, 1))  # Assign the scaler to the class instance
+        self.scaler = MinMaxScaler(feature_range=(0, 1))
         scaled_data = self.scaler.fit_transform(data[features])
 
         X, y = [], []
@@ -57,7 +57,7 @@ class LSTMStockPredictor:
             X.append(scaled_data[i:i + self.look_back])
             y.append(scaled_data[i + self.look_back][0])
 
-        return np.array(X), np.array(y), self.scaler
+        return np.array(X), np.array(y)
 
     def build_model(self):
         model = Sequential([
@@ -72,7 +72,7 @@ class LSTMStockPredictor:
         self.model = model
 
     def train(self, data):
-        X, y, scaler = self.preprocess_data(data)
+        X, y = self.preprocess_data(data)
         self.build_model()
 
         checkpoint = ModelCheckpoint('best_model.keras', save_best_only=True, monitor='val_loss', mode='min')
@@ -81,14 +81,39 @@ class LSTMStockPredictor:
         self.model.fit(X, y, epochs=3, batch_size=16, validation_split=0.2, callbacks=[checkpoint, early_stopping], verbose=1)
 
         self.load_model('best_model.keras')
-        return self.scaler  # Return the scaler
 
-    def predict(self, data, scaler):
-        last_sequence = data[['Close', 'Volume', 'SMA_20', 'SMA_50', 'EMA_20', 'EMA_50', 'RSI', 'MACD', 'MACD_Signal', 'BB_Upper', 'BB_Lower', 'Momentum']].values[-self.look_back:]
-        last_sequence = scaler.transform(last_sequence)
-        last_sequence = np.expand_dims(last_sequence, axis=0)
-        prediction = self.model.predict(last_sequence)
-        return scaler.inverse_transform(prediction)[0, 0]
+    def predict_recursive(self, data, future_steps=10):
+        """
+        Make recursive predictions for a future number of steps.
+
+        Args:
+            data (pd.DataFrame): Historical stock data with indicators.
+            future_steps (int): Number of future steps (days) to predict.
+
+        Returns:
+            np.array: Array of predicted future closing prices.
+        """
+        last_sequence = data[['Close', 'Volume']].values[-self.look_back:]  # Start with last known data
+        predictions = []
+        for step in range(future_steps):
+            # Scale the last sequence
+            last_sequence_scaled = self.scaler.transform(last_sequence)
+            last_sequence_scaled = np.expand_dims(last_sequence_scaled, axis=0)
+
+            # Predict the next closing price
+            predicted_scaled = self.model.predict(last_sequence_scaled)
+
+            # Inverse transform to get the actual closing price prediction
+            predicted_close = self.scaler.inverse_transform(
+                np.pad(predicted_scaled, ((0, 0), (0, data.shape[1] - 1)), mode='constant'))[0, 0]
+
+            predictions.append(predicted_close)
+
+            # Update the last sequence by shifting and adding the new predicted close & dummy volume (use last known volume)
+            new_row = np.array([[predicted_close, last_sequence[-1, 1]]])  # Use predicted close and last known volume
+            last_sequence = np.vstack([last_sequence[1:], new_row])  # Shift and append the new prediction
+
+        return np.array(predictions)
 
     def save_model(self, filename):
         if self.model:
