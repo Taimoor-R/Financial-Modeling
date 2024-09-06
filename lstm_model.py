@@ -5,8 +5,9 @@ from tensorflow.keras.layers import LSTM, Dense, Dropout, Bidirectional
 from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
 from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.layers import Input
+
 class LSTMStockPredictor:
-    def __init__(self, look_back=5, dropout_rate=0.2, units=50):
+    def __init__(self, look_back=25, dropout_rate=0.2, units=50):
         """
         Initialize the LSTM stock predictor with enhanced architecture.
 
@@ -15,7 +16,7 @@ class LSTMStockPredictor:
             dropout_rate (float): Dropout rate for regularization.
             units (int): Number of units in LSTM layers.
         """
-        self.look_back = look_back
+        self.look_back = look_back  # Using 25 time steps to predict the next value
         self.dropout_rate = dropout_rate
         self.units = units
         self.model = None
@@ -42,8 +43,6 @@ class LSTMStockPredictor:
 
         return np.array(X), np.array(y), scaler
 
-
-
     def build_model(self):
         """
         Build and compile the enhanced LSTM model.
@@ -58,7 +57,6 @@ class LSTMStockPredictor:
         ])
         model.compile(optimizer='adam', loss='mean_squared_error')
         self.model = model
-
 
     def train(self, data):
         X, y, scaler = self.preprocess_data(data)
@@ -75,8 +73,6 @@ class LSTMStockPredictor:
         self.load_model('best_model.keras')
 
         return scaler
-
-
 
     def predict(self, data, scaler):
         """
