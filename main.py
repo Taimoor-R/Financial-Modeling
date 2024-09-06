@@ -5,8 +5,6 @@ import plotly.graph_objs as go
 import pandas as pd
 import numpy as np
 import yfinance as yf
-from textblob import TextBlob
-from data_collector import fetch_current_news
 from lstm_model import LSTMStockPredictor
 from reinforcement_learning import train_reinforcement_learning_model, StockTradingEnv
 
@@ -33,7 +31,6 @@ def fetch_top_50_stock_data(tickers, start_date, end_date):
         print(f"Fetching data for: {ticker}")
         stock_data = yf.download(ticker, start=start_date, end=end_date)
 
-        # Ensure Date is part of the data (usually Date is the index from yfinance)
         if not stock_data.empty:
             stock_data['Ticker'] = ticker  # Add a ticker column
             stock_data.reset_index(inplace=True)  # Reset the index to make Date a column
@@ -45,40 +42,16 @@ def fetch_top_50_stock_data(tickers, start_date, end_date):
     combined_data = pd.concat(all_data, ignore_index=True)
     combined_data = combined_data.dropna()  # Drop rows with missing values
 
-    # Debugging: Check if 'Date' is in the columns
     print(f"Combined data columns: {combined_data.columns}")
     
     return combined_data
 
-# Fetch sentiment and ensure Date is handled correctly
-def fetch_and_analyze_news(ticker, start_date, end_date):
-    news_data = fetch_current_news(ticker, start_date, end_date)
-    if news_data:
-        news_sentiments = [TextBlob(item['headline']).sentiment.polarity for item in news_data]
-        avg_sentiment = np.mean(news_sentiments)  # Average sentiment score
-    else:
-        avg_sentiment = 0  # Neutral sentiment if no news
-    return avg_sentiment
-
-# Train model on top 50 stock data including sentiment
+# Train model on top 50 stock data
 def train_model_on_top_50_stocks():
+    print("Starting to fetch and train model on top 50 stocks...")
     stock_data = fetch_top_50_stock_data(top_50_tickers, start_date, end_date)
-    combined_data = []
-    
-    for ticker in top_50_tickers:
-        print(f"Fetching sentiment data for {ticker}")
-        avg_sentiment = fetch_and_analyze_news(ticker, start_date, end_date)
-        stock_data_ticker = stock_data[stock_data['Ticker'] == ticker].copy()
-        stock_data_ticker['Sentiment'] = avg_sentiment  # Add sentiment as a feature
-        
-        # Debugging: Check if 'Date' is present in the ticker data
-        print(f"Ticker data columns: {stock_data_ticker.columns}")
-        
-        combined_data.append(stock_data_ticker)
+    combined_data = pd.concat(stock_data, ignore_index=True)
 
-    combined_data = pd.concat(combined_data, ignore_index=True)
-
-    # Debugging: Check if 'Date' is present in the combined data
     print(f"Combined data after concatenation columns: {combined_data.columns}")
 
     # Set Date as the index if it's available
@@ -87,38 +60,39 @@ def train_model_on_top_50_stocks():
     else:
         print("Error: 'Date' column is missing after concatenation")
 
-    # Train LSTM model with stock data and sentiment
-    lstm_predictor.train(combined_data[['Close', 'Volume', 'Sentiment']])
+    print("Training LSTM model...")
+    lstm_predictor.train(combined_data[['Close', 'Volume']])
+    print("LSTM model training completed.")
 
 # Generate predictions using LSTM model
 def generate_predictions(stock_data, predictor, scaler):
+    print(f"Generating predictions for stock data with shape: {stock_data.shape}")
     if 'Close' not in stock_data.columns:
         print(f"Error: 'Close' column not found in stock_data.")
         return pd.DataFrame()
 
     predictions = []
     for i in range(len(stock_data) - predictor.look_back):
-        features = stock_data.iloc[i:i + predictor.look_back][['Close', 'Volume', 'Sentiment']]
+        features = stock_data.iloc[i:i + predictor.look_back][['Close', 'Volume']]
         prediction = predictor.predict(features, scaler)
         predictions.append(prediction)
+    print(f"Generated {len(predictions)} predictions")
     return pd.DataFrame(predictions, columns=['Predicted'], index=stock_data.index[predictor.look_back:])
 
 # Train reinforcement learning model using LSTM predictions
-def train_reinforcement_learning(stock_data, sentiment_scores):
+def train_reinforcement_learning(stock_data):
+    print("Training reinforcement learning model...")
     global lstm_predictor, scaler
     predictions_df = generate_predictions(stock_data, lstm_predictor, scaler)
-    train_reinforcement_learning_model(stock_data, sentiment_scores, lstm_predictor, scaler)
+    train_reinforcement_learning_model(stock_data, lstm_predictor, scaler)
+    print("Reinforcement learning model training completed.")
 
-# Get stock data and sentiment for a specific stock
-def get_stock_and_news_data():
+# Get stock data for a specific stock
+def get_stock_data():
+    print(f"Fetching stock data for {ticker}")
     stock_data = fetch_top_50_stock_data([ticker], start_date, end_date)
 
-    # Fetch sentiment data for the ticker
-    avg_sentiment = fetch_and_analyze_news(ticker, start_date, end_date)
-
-    # Add sentiment as a feature
-    stock_data['Sentiment'] = avg_sentiment
-
+    print(f"Fetched stock data for {ticker}")
     return stock_data
 
 # Define the app layout
@@ -140,17 +114,18 @@ def update_graph(n):
     global lstm_predictor, scaler
 
     try:
-        stock_data = get_stock_and_news_data()
+        print(f"Update graph called with interval: {n}")
+        stock_data = get_stock_data()
 
         if scaler is None:
+            print("Scaler not found, training model on top 50 stocks")
             train_model_on_top_50_stocks()  # Train model on top 50 stocks (2000-2023 data)
             scaler = lstm_predictor.train(stock_data)  # Update if needed
 
         predictions_df = generate_predictions(stock_data, lstm_predictor, scaler)
 
         # After generating LSTM predictions, train reinforcement learning model
-        sentiment_scores = stock_data['Sentiment'].values
-        train_reinforcement_learning(stock_data, sentiment_scores)
+        train_reinforcement_learning(stock_data)
 
         # Create traces for the graph
         stock_trace = go.Scatter(x=stock_data.index, y=stock_data['Close'], mode='lines', name='Actual')
@@ -158,6 +133,7 @@ def update_graph(n):
 
         layout = go.Layout(title=f'Stock Prices and Indicators for {ticker}', xaxis=dict(title='Date'), yaxis=dict(title='Value'))
 
+        print("Graph updated successfully.")
         return {'data': [stock_trace, prediction_trace], 'layout': layout}
     except Exception as e:
         print(f"Error in update function: {e}")
