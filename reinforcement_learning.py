@@ -2,7 +2,6 @@ import numpy as np
 import gym
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv
-from lstm_model import LSTMStockPredictor
 import pandas as pd
 
 class StockTradingEnv(gym.Env):
@@ -12,13 +11,12 @@ class StockTradingEnv(gym.Env):
         self.lstm_predictor = lstm_predictor
         self.scaler = scaler
         self.current_step = 0
-        self.action_space = gym.spaces.Discrete(3)
+        self.action_space = gym.spaces.Discrete(3)  # Buy, Hold, Sell
         self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(self.data.shape[1],), dtype=np.float32)
 
     def reset(self):
         self.current_step = 0
-        obs = self.get_observation()
-        return obs
+        return self.get_observation()
 
     def get_observation(self):
         if self.current_step < len(self.data):
@@ -37,16 +35,15 @@ class StockTradingEnv(gym.Env):
         lstm_prediction = self.lstm_predictor.predict(self.data.iloc[self.current_step:self.current_step + self.lstm_predictor.look_back], self.scaler)
 
         reward = 0
-        if action == 0:
+        if action == 0:  # Buy
             reward = current_close - prev_close
-        elif action == 2:
+        elif action == 2:  # Sell
             reward = prev_close - current_close
 
         prediction_error = abs(lstm_prediction - current_close)
         reward -= prediction_error
 
-        obs = self.get_observation()
-        return obs, reward, done, {}
+        return self.get_observation(), reward, done, {}
 
     def render(self, mode='human'):
         pass

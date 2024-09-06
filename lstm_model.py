@@ -12,9 +12,10 @@ class LSTMStockPredictor:
         self.dropout_rate = dropout_rate
         self.units = units
         self.model = None
+        self.scaler = None  # Store the scaler as an instance attribute
 
     def calculate_technical_indicators(self, data):
-        data = data.copy()  # Create a copy of the DataFrame
+        data = data.copy()
         data['SMA_20'] = data['Close'].rolling(window=20).mean()
         data['SMA_50'] = data['Close'].rolling(window=50).mean()
         data['EMA_20'] = data['Close'].ewm(span=20, adjust=False).mean()
@@ -48,15 +49,15 @@ class LSTMStockPredictor:
     def preprocess_data(self, data):
         data = self.calculate_technical_indicators(data)
         features = ['Close', 'Volume', 'SMA_20', 'SMA_50', 'EMA_20', 'EMA_50', 'RSI', 'MACD', 'MACD_Signal', 'BB_Upper', 'BB_Lower', 'Momentum']
-        scaler = MinMaxScaler(feature_range=(0, 1))
-        scaled_data = scaler.fit_transform(data[features])
+        self.scaler = MinMaxScaler(feature_range=(0, 1))  # Assign the scaler to the class instance
+        scaled_data = self.scaler.fit_transform(data[features])
 
         X, y = [], []
         for i in range(len(scaled_data) - self.look_back):
             X.append(scaled_data[i:i + self.look_back])
             y.append(scaled_data[i + self.look_back][0])
 
-        return np.array(X), np.array(y), scaler
+        return np.array(X), np.array(y), self.scaler
 
     def build_model(self):
         model = Sequential([
@@ -80,7 +81,7 @@ class LSTMStockPredictor:
         self.model.fit(X, y, epochs=3, batch_size=16, validation_split=0.2, callbacks=[checkpoint, early_stopping], verbose=1)
 
         self.load_model('best_model.keras')
-        return scaler
+        return self.scaler  # Return the scaler
 
     def predict(self, data, scaler):
         last_sequence = data[['Close', 'Volume', 'SMA_20', 'SMA_50', 'EMA_20', 'EMA_50', 'RSI', 'MACD', 'MACD_Signal', 'BB_Upper', 'BB_Lower', 'Momentum']].values[-self.look_back:]
