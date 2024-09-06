@@ -20,4 +20,3 @@ def plot_live_updates(data):
     plt.title('Live Stock Data')
     plt.legend()
     plt.show()
-    

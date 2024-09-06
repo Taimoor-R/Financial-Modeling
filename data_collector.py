@@ -6,8 +6,9 @@ import json
 # Fetch historical stock data for the ticker
 def fetch_stock_data(ticker, start_date, end_date):
     stock_data = yf.download(ticker, start=start_date, end=end_date)
-    stock_data = stock_data.dropna()  # Drop rows with NaN values
+    stock_data = stock_data.dropna()
     return stock_data
+
 
 # Fetch relevant news for a ticker and a date range
 def fetch_current_news(ticker, start_date, end_date):
