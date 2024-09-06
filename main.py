@@ -3,21 +3,20 @@ from dash import dcc, html
 from dash.dependencies import Input, Output
 import plotly.graph_objs as go
 import pandas as pd
-import numpy as np
 import yfinance as yf
 from lstm_model import LSTMStockPredictor
-from reinforcement_learning import train_reinforcement_learning_model
+from visualization import plot_stock_data
 
 # Initialize the Dash app
 app = dash.Dash(__name__)
 
 # Global variables
-ticker = 'NVDA'  # Example ticker for Nvidia
+ticker = 'NVDA'
 start_date = '2000-01-01'
 end_date = '2023-12-31'
+future_steps = 30  # Number of future days to predict
 lstm_predictor = LSTMStockPredictor(look_back=25)
 scaler = None
-rl_model = None
 
 # Fetch historical stock data for a single ticker
 def fetch_one_stock_data(ticker, start_date, end_date):
@@ -57,48 +56,55 @@ def add_technical_indicators(stock_data):
     stock_data = stock_data.dropna()  # Drop rows with NaN values after calculations
     return stock_data
 
-# Train model on one stock
+# Train the model on one stock
 def train_model_on_one_stock():
+    global scaler  # Ensure scaler is correctly set globally
     print("Training LSTM on one stock...")
     stock_data = fetch_one_stock_data(ticker, start_date, end_date)
     stock_data = add_technical_indicators(stock_data)
-    print(f"Stock data with technical indicators shape: {stock_data.shape}")
     if 'Date' in stock_data.columns:
         stock_data.set_index('Date', inplace=True)
-    lstm_predictor.train(stock_data[['Close', 'Volume', 'SMA_20', 'SMA_50', 'EMA_20', 'EMA_50', 'RSI', 'MACD', 'MACD_Signal', 'BB_Upper', 'BB_Lower', 'Momentum']])
+    scaler = lstm_predictor.train(stock_data[['Close', 'Volume', 'SMA_20', 'SMA_50', 'EMA_20', 'EMA_50', 'RSI', 'MACD', 'MACD_Signal', 'BB_Upper', 'BB_Lower', 'Momentum']])
     print("LSTM model trained on one stock.")
 
-# Generate predictions using LSTM model
-def generate_predictions(stock_data, predictor):
-    print(f"Generating predictions for stock data with shape: {stock_data.shape}")
-    if 'Close' not in stock_data.columns:
-        print(f"Error: 'Close' column not found in stock_data.")
-        return pd.DataFrame()
-
-    predictions = []
-    for i in range(len(stock_data) - predictor.look_back):
-        features = stock_data.iloc[i:i + predictor.look_back][['Close', 'Volume', 'SMA_20', 'SMA_50', 'EMA_20', 'EMA_50', 'RSI', 'MACD', 'MACD_Signal', 'BB_Upper', 'BB_Lower', 'Momentum']]
-        prediction = predictor.predict(features)
-        predictions.append(prediction)
-    print(f"Generated {len(predictions)} predictions")
-    return pd.DataFrame(predictions, columns=['Predicted'], index=stock_data.index[predictor.look_back:])
-
-# Train reinforcement learning model using LSTM predictions
-def train_reinforcement_learning(stock_data):
-    print("Training reinforcement learning model...")
-    global lstm_predictor
-    predictions_df = generate_predictions(stock_data, lstm_predictor)
-    train_reinforcement_learning_model(stock_data, lstm_predictor)
-    print("Reinforcement learning model training completed.")
-
-# Get stock data for a specific stock
-def get_stock_data():
-    print(f"Fetching stock data for {ticker}")
+# Generate recursive predictions
+def predict_future():
+    global scaler  # Ensure scaler is used in prediction
+    print(f"Generating {future_steps} days of future predictions...")
     stock_data = fetch_one_stock_data(ticker, start_date, end_date)
     stock_data = add_technical_indicators(stock_data)
-    print(f"Fetched stock data for {ticker}")
-    print(f"Columns in stock data: {stock_data.columns}")
-    return stock_data
+    if 'Date' in stock_data.columns:
+        stock_data.set_index('Date', inplace=True)
+
+    # Check if scaler is initialized
+    if scaler is None:
+        print("Scaler not found, training model...")
+        train_model_on_one_stock()
+
+    # Generate future predictions
+    future_predictions = lstm_predictor.predict_recursive(stock_data, scaler, future_steps=future_steps)
+    print(f"Future predictions: {future_predictions}")
+    
+    return future_predictions
+
+# Generate the plot for historical data and predictions
+def generate_plot(stock_data, future_predictions):
+    actual_trace = go.Scatter(x=stock_data.index, y=stock_data['Close'], mode='lines', name='Actual')
+    future_trace = go.Scatter(x=pd.date_range(stock_data.index[-1], periods=future_steps + 1, closed='right'), 
+                              y=future_predictions, mode='lines', name='Predicted', line=dict(dash='dash'))
+
+    layout = go.Layout(title=f'Stock Prices and Predictions for {ticker}', xaxis=dict(title='Date'), yaxis=dict(title='Value'))
+
+    return {'data': [actual_trace, future_trace], 'layout': layout}
+
+# Get stock data and plot predictions
+def get_stock_and_predictions():
+    stock_data = fetch_one_stock_data(ticker, start_date, end_date)
+    stock_data = add_technical_indicators(stock_data)
+    
+    future_predictions = predict_future()
+    
+    return generate_plot(stock_data, future_predictions)
 
 # Define the app layout
 app.layout = html.Div([
@@ -116,26 +122,9 @@ app.layout = html.Div([
     [Input('interval-component', 'n_intervals')]
 )
 def update_graph(n):
-    global lstm_predictor, scaler
-
     try:
         print(f"Update graph called with interval: {n}")
-        stock_data = get_stock_data()
-
-        if scaler is None:
-            print("Scaler not found, training model on one stock")
-            train_model_on_one_stock()
-
-        predictions_df = generate_predictions(stock_data, lstm_predictor)
-
-        # Create traces for the graph
-        stock_trace = go.Scatter(x=stock_data.index, y=stock_data['Close'], mode='lines', name='Actual')
-        prediction_trace = go.Scatter(x=predictions_df.index, y=predictions_df['Predicted'], mode='lines', name='Predicted', line=dict(dash='dash'))
-
-        layout = go.Layout(title=f'Stock Prices and Predictions for {ticker}', xaxis=dict(title='Date'), yaxis=dict(title='Value'))
-
-        print("Graph updated successfully.")
-        return {'data': [stock_trace, prediction_trace], 'layout': layout}
+        return get_stock_and_predictions()
     except Exception as e:
         print(f"Error in update function: {e}")
         return {'data': [], 'layout': go.Layout(title='Error')}
