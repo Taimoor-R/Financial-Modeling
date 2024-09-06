@@ -23,7 +23,8 @@ class LSTMStockPredictor:
         data['MACD'], data['MACD_Signal'] = self.calculate_macd(data)
         data['BB_Mid'], data['BB_Upper'], data['BB_Lower'] = self.calculate_bollinger_bands(data)
         data['Momentum'] = data['Close'].diff(4)
-
+        data = data.dropna()  # Ensure no NaN values after rolling calculations
+        return data
 
     def calculate_rsi(self, data, window=14):
         delta = data['Close'].diff(1)
