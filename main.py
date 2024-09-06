@@ -33,17 +33,24 @@ def fetch_top_50_stock_data(tickers, start_date, end_date):
         print(f"Fetching data for: {ticker}")
         stock_data = yf.download(ticker, start=start_date, end=end_date)
 
+        # Ensure Date is part of the data (usually Date is the index from yfinance)
         if not stock_data.empty:
             stock_data['Ticker'] = ticker  # Add a ticker column
-            all_data.append(stock_data[['Close', 'Volume', 'Ticker']])
+            stock_data.reset_index(inplace=True)  # Reset the index to make Date a column
+            print(f"Columns for {ticker}: {stock_data.columns}")  # Debugging statement
+            all_data.append(stock_data[['Date', 'Close', 'Volume', 'Ticker']])
         else:
             print(f"Warning: Data not found for {ticker}")
 
-    combined_data = pd.concat(all_data)
+    combined_data = pd.concat(all_data, ignore_index=True)
     combined_data = combined_data.dropna()  # Drop rows with missing values
+
+    # Debugging: Check if 'Date' is in the columns
+    print(f"Combined data columns: {combined_data.columns}")
+    
     return combined_data
 
-# Fetch relevant news and analyze sentiment
+# Fetch sentiment and ensure Date is handled correctly
 def fetch_and_analyze_news(ticker, start_date, end_date):
     news_data = fetch_current_news(ticker, start_date, end_date)
     if news_data:
@@ -57,18 +64,30 @@ def fetch_and_analyze_news(ticker, start_date, end_date):
 def train_model_on_top_50_stocks():
     stock_data = fetch_top_50_stock_data(top_50_tickers, start_date, end_date)
     combined_data = []
-
+    
     for ticker in top_50_tickers:
         print(f"Fetching sentiment data for {ticker}")
         avg_sentiment = fetch_and_analyze_news(ticker, start_date, end_date)
         stock_data_ticker = stock_data[stock_data['Ticker'] == ticker].copy()
         stock_data_ticker['Sentiment'] = avg_sentiment  # Add sentiment as a feature
+        
+        # Debugging: Check if 'Date' is present in the ticker data
+        print(f"Ticker data columns: {stock_data_ticker.columns}")
+        
         combined_data.append(stock_data_ticker)
 
-    combined_data = pd.concat(combined_data)
+    combined_data = pd.concat(combined_data, ignore_index=True)
+
+    # Debugging: Check if 'Date' is present in the combined data
+    print(f"Combined data after concatenation columns: {combined_data.columns}")
+
+    # Set Date as the index if it's available
+    if 'Date' in combined_data.columns:
+        combined_data.set_index('Date', inplace=True)
+    else:
+        print("Error: 'Date' column is missing after concatenation")
 
     # Train LSTM model with stock data and sentiment
-    combined_data.set_index('Date', inplace=True)
     lstm_predictor.train(combined_data[['Close', 'Volume', 'Sentiment']])
 
 # Generate predictions using LSTM model
