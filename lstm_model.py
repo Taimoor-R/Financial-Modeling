@@ -1,48 +1,50 @@
 import numpy as np
 from keras.models import Sequential
-from keras.layers import LSTM, Dense, Conv1D, MaxPooling1D, Flatten, Dropout, Input
+from keras.layers import LSTM, Dense, Conv1D, MaxPooling1D, Dropout, Bidirectional, Input
 from keras.callbacks import EarlyStopping
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 import matplotlib.pyplot as plt
 
-def build_hybrid_model():
+def build_hybrid_blstm_model():
     """
-    Build a hybrid model that combines 1D CNN and LSTM for stock price prediction.
+    Build a deeper hybrid model that combines 1D CNN and Bidirectional LSTM for stock price prediction.
     """
-    print("Building hybrid 1D CNN + LSTM model structure")
+    print("Building hybrid 1D CNN + Bidirectional LSTM model structure")
     
     model = Sequential()
     
     # 1D CNN layer to extract features
-    model.add(Input(shape=(25, 1)))  # Input layer
-    model.add(Conv1D(filters=64, kernel_size=3, activation='relu'))
+    model.add(Input(shape=(50, 1)))  # Increased look-back to 50
+    model.add(Conv1D(filters=128, kernel_size=3, activation='relu'))  # Increased CNN filters
     model.add(MaxPooling1D(pool_size=2))
     
-    # LSTM layers to capture sequential dependencies
-    model.add(LSTM(units=128, return_sequences=True))  # Increased LSTM units
-    model.add(Dropout(0.2))  # Dropout to reduce overfitting
-    model.add(LSTM(units=128))
-    model.add(Dropout(0.2))
+    # Bidirectional LSTM layers to capture sequential dependencies from both directions
+    model.add(Bidirectional(LSTM(units=256, return_sequences=True)))  # BLSTM with 256 units
+    model.add(Dropout(0.3))  # Higher dropout to prevent overfitting
+    model.add(Bidirectional(LSTM(units=256, return_sequences=True)))  # Another BLSTM layer
+    model.add(Dropout(0.3))
+    model.add(Bidirectional(LSTM(units=128)))  # Added another BLSTM layer
+    model.add(Dropout(0.3))
 
     # Dense layer for output
     model.add(Dense(1))  # Output layer
     model.compile(optimizer='adam', loss='mean_squared_error')
     
-    print("Hybrid model built successfully")
+    print("Hybrid model with BLSTM built successfully with increased complexity")
     return model
 
-def preprocess_data(stock_data, validation_split=0.2):
+def preprocess_data(stock_data, look_back=50, validation_split=0.2):
     """
     Preprocess stock data by scaling and reshaping it for the hybrid model. Split into training and validation sets.
     """
-    print("Preprocessing stock data for hybrid model")
+    print(f"Preprocessing stock data with look-back window of {look_back}")
     scaler = MinMaxScaler(feature_range=(0, 1))
     stock_scaled = scaler.fit_transform(stock_data)
 
     X, y = [], []
-    for i in range(25, len(stock_scaled)):
-        X.append(stock_scaled[i-25:i, 0])
+    for i in range(look_back, len(stock_scaled)):
+        X.append(stock_scaled[i-look_back:i, 0])
         y.append(stock_scaled[i, 0])
 
     X, y = np.array(X), np.array(y)
@@ -54,15 +56,15 @@ def preprocess_data(stock_data, validation_split=0.2):
     
     return X_train, y_train, X_val, y_val, scaler
 
-def train_hybrid_model(model, stock_data, dates):
+def train_hybrid_blstm_model(model, stock_data, dates, look_back=50):
     """
-    Train the hybrid model on a single stock and validate performance.
+    Train the hybrid BLSTM model on a single stock and validate performance.
     """
-    print("Starting hybrid model training")
+    print("Starting hybrid BLSTM model training")
 
-    X_train, y_train, X_val, y_val, scaler = preprocess_data(stock_data['Close'].values.reshape(-1, 1))
+    X_train, y_train, X_val, y_val, scaler = preprocess_data(stock_data['Close'].values.reshape(-1, 1), look_back=look_back)
 
-    # Reshape the data to 3D [samples, time steps, features] for 1D CNN + LSTM
+    # Reshape the data to 3D [samples, time steps, features] for 1D CNN + BLSTM
     X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], 1))
     X_val = np.reshape(X_val, (X_val.shape[0], X_val.shape[1], 1))
 
@@ -104,13 +106,13 @@ def plot_predictions(dates, y_actual, y_pred):
     plt.xticks(rotation=45)
     plt.show()
 
-def evaluate_hybrid_model(model, stock_data, scaler, dates):
+def evaluate_hybrid_blstm_model(model, stock_data, scaler, dates, look_back=50):
     """
-    Evaluate the hybrid model on unseen stock data and return predictions.
+    Evaluate the hybrid BLSTM model on unseen stock data and return predictions.
     """
-    print("Evaluating hybrid model on test data")
+    print("Evaluating hybrid BLSTM model on test data")
     
-    X_test, y_test, _, _, _ = preprocess_data(stock_data['Close'].values.reshape(-1, 1), validation_split=0)
+    X_test, y_test, _, _, _ = preprocess_data(stock_data['Close'].values.reshape(-1, 1), look_back=look_back, validation_split=0)
     X_test = np.reshape(X_test, (X_test.shape[0], X_test.shape[1], 1))
 
     # Predict on the test data
