@@ -1,68 +1,52 @@
 import numpy as np
-import pandas as pd
 from tensorflow.keras.models import Sequential, load_model
 from tensorflow.keras.layers import LSTM, Dense, Dropout, Bidirectional
 from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
 from sklearn.preprocessing import MinMaxScaler
-from tensorflow.keras.layers import Input
 
 class LSTMStockPredictor:
-    def __init__(self, look_back=25, dropout_rate=0.2, units=50):
+    def __init__(self, look_back=5, dropout_rate=0.2, units=50):
+        """
+        Initialize the LSTM stock predictor with enhanced architecture.
+
+        Args:
+            look_back (int): Number of previous time steps to use for prediction.
+            dropout_rate (float): Dropout rate for regularization.
+            units (int): Number of units in LSTM layers.
+        """
         self.look_back = look_back
         self.dropout_rate = dropout_rate
         self.units = units
         self.model = None
-        self.scaler = None
-
-    def calculate_technical_indicators(self, data):
-        data = data.copy()
-        data['SMA_20'] = data['Close'].rolling(window=20).mean()
-        data['SMA_50'] = data['Close'].rolling(window=50).mean()
-        data['EMA_20'] = data['Close'].ewm(span=20, adjust=False).mean()
-        data['EMA_50'] = data['Close'].ewm(span=50, adjust=False).mean()
-        data['RSI'] = self.calculate_rsi(data)
-        data['MACD'], data['MACD_Signal'] = self.calculate_macd(data)
-        data['BB_Mid'], data['BB_Upper'], data['BB_Lower'] = self.calculate_bollinger_bands(data)
-        data['Momentum'] = data['Close'].diff(4)
-        data = data.dropna()
-        return data
-
-    def calculate_rsi(self, data, window=14):
-        delta = data['Close'].diff(1)
-        gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
-        rs = gain / loss
-        return 100 - (100 / (1 + rs))
-
-    def calculate_macd(self, data):
-        macd = data['Close'].ewm(span=12, adjust=False).mean() - data['Close'].ewm(span=26, adjust=False).mean()
-        macd_signal = macd.ewm(span=9, adjust=False).mean()
-        return macd, macd_signal
-
-    def calculate_bollinger_bands(self, data, window=20):
-        mid = data['Close'].rolling(window=window).mean()
-        std_dev = data['Close'].rolling(window=window).std()
-        upper = mid + (std_dev * 2)
-        lower = mid - (std_dev * 2)
-        return mid, upper, lower
 
     def preprocess_data(self, data):
-        data = self.calculate_technical_indicators(data)
-        features = ['Close', 'Volume', 'SMA_20', 'SMA_50', 'EMA_20', 'EMA_50', 'RSI', 'MACD', 'MACD_Signal', 'BB_Upper', 'BB_Lower', 'Momentum']
-        self.scaler = MinMaxScaler(feature_range=(0, 1))
-        scaled_data = self.scaler.fit_transform(data[features])
+        """
+        Preprocess stock data for LSTM model, including scaling.
+
+        Args:
+            data (pd.DataFrame): Stock data with at least a 'Close' column.
+
+        Returns:
+            X (np.ndarray): Input features for the model.
+            y (np.ndarray): Target values for the model.
+            scaler (MinMaxScaler): Fitted scaler for transforming data.
+        """
+        scaler = MinMaxScaler(feature_range=(0, 1))
+        scaled_data = scaler.fit_transform(data[['Close']].values.reshape(-1, 1))
 
         X, y = [], []
         for i in range(len(scaled_data) - self.look_back):
             X.append(scaled_data[i:i + self.look_back])
-            y.append(scaled_data[i + self.look_back][0])
+            y.append(scaled_data[i + self.look_back])
 
-        return np.array(X), np.array(y)
+        return np.array(X), np.array(y), scaler
 
     def build_model(self):
+        """
+        Build and compile the enhanced LSTM model.
+        """
         model = Sequential([
-            Input(shape=(self.look_back, 12)),
-            Bidirectional(LSTM(units=self.units, return_sequences=True)),
+            Bidirectional(LSTM(units=self.units, return_sequences=True, input_shape=(self.look_back, 1))),
             Dropout(self.dropout_rate),
             LSTM(units=self.units),
             Dropout(self.dropout_rate),
@@ -72,54 +56,67 @@ class LSTMStockPredictor:
         self.model = model
 
     def train(self, data):
-        X, y = self.preprocess_data(data)
+        """
+        Train the LSTM model on the provided data with callbacks.
+
+        Args:
+            data (pd.DataFrame): Stock data with at least a 'Close' column.
+
+        Returns:
+            scaler (MinMaxScaler): Fitted scaler for transforming data.
+        """
+        X, y, scaler = self.preprocess_data(data)
         self.build_model()
 
+        # Define callbacks
         checkpoint = ModelCheckpoint('best_model.keras', save_best_only=True, monitor='val_loss', mode='min')
         early_stopping = EarlyStopping(monitor='val_loss', patience=10, mode='min')
 
-        self.model.fit(X, y, epochs=3, batch_size=16, validation_split=0.2, callbacks=[checkpoint, early_stopping], verbose=1)
+        self.model.fit(X, y, epochs=100, batch_size=32, validation_split=0.2, 
+                       callbacks=[checkpoint, early_stopping], verbose=1)
 
+        # Load the best model
         self.load_model('best_model.keras')
 
-    def predict_recursive(self, data, future_steps=10):
+        return scaler
+
+    def predict(self, data, scaler):
         """
-        Make recursive predictions for a future number of steps.
+        Predict the next stock price using the trained model.
 
         Args:
-            data (pd.DataFrame): Historical stock data with indicators.
-            future_steps (int): Number of future steps (days) to predict.
+            data (pd.DataFrame): Stock data with at least a 'Close' column.
+            scaler (MinMaxScaler): Scaler used to preprocess the data.
 
         Returns:
-            np.array: Array of predicted future closing prices.
+            float: Predicted stock price.
         """
-        last_sequence = data[['Close', 'Volume']].values[-self.look_back:]  # Start with last known data
-        predictions = []
-        for step in range(future_steps):
-            # Scale the last sequence
-            last_sequence_scaled = self.scaler.transform(last_sequence)
-            last_sequence_scaled = np.expand_dims(last_sequence_scaled, axis=0)
-
-            # Predict the next closing price
-            predicted_scaled = self.model.predict(last_sequence_scaled)
-
-            # Inverse transform to get the actual closing price prediction
-            predicted_close = self.scaler.inverse_transform(
-                np.pad(predicted_scaled, ((0, 0), (0, data.shape[1] - 1)), mode='constant'))[0, 0]
-
-            predictions.append(predicted_close)
-
-            # Update the last sequence by shifting and adding the new predicted close & dummy volume (use last known volume)
-            new_row = np.array([[predicted_close, last_sequence[-1, 1]]])  # Use predicted close and last known volume
-            last_sequence = np.vstack([last_sequence[1:], new_row])  # Shift and append the new prediction
-
-        return np.array(predictions)
+        last_sequence = data[['Close']].values[-self.look_back:].reshape(-1, 1)
+        last_sequence = scaler.transform(last_sequence)
+        last_sequence = np.expand_dims(last_sequence, axis=0)
+        prediction = self.model.predict(last_sequence)
+        return scaler.inverse_transform(prediction)[0, 0]
 
     def save_model(self, filename):
+        """
+        Save the trained model to a file.
+
+        Args:
+            filename (str): Path to the file where the model should be saved.
+
+        Raises:
+            ValueError: If the model has not been trained yet.
+        """
         if self.model:
             self.model.save(filename)
         else:
             raise ValueError("Model is not trained. Please train the model before saving.")
 
     def load_model(self, filename):
+        """
+        Load a trained model from a file.
+
+        Args:
+            filename (str): Path to the file from which the model should be loaded.
+        """
         self.model = load_model(filename)

@@ -1,22 +1,11 @@
 import matplotlib.pyplot as plt
-import pandas as pd
 
-def plot_stock_data(data, predictions=None):
-    plt.figure(figsize=(14, 7))
-    plt.plot(data.index, data['Close'], label='Actual')
-    if predictions is not None:
-        plt.plot(predictions.index, predictions['Predicted'], label='Predicted', linestyle='--')
-    plt.xlabel('Date')
-    plt.ylabel('Price')
-    plt.title('Stock Prices')
-    plt.legend()
-    plt.show()
-
-def plot_live_updates(data):
-    plt.figure(figsize=(14, 7))
-    plt.plot(data.index, data['Close'], label='Live Data')
-    plt.xlabel('Date')
-    plt.ylabel('Price')
-    plt.title('Live Stock Data')
+def plot_stock_predictions(actual_prices, predicted_prices, ticker):
+    plt.figure(figsize=(12, 6))
+    plt.plot(actual_prices, color="black", label="Actual Stock Price")
+    plt.plot(predicted_prices, color="green", label="Predicted Stock Price")
+    plt.title(f"{ticker} Stock Price Prediction vs Actual")
+    plt.xlabel("Days")
+    plt.ylabel("Price")
     plt.legend()
     plt.show()
